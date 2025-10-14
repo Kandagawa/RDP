@@ -1,0 +1,23 @@
+name: A
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: "Nhập nội dung để test"
+        required: true
+        default: "Xin chào từ workflow A"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mã nguồn
+        uses: actions/checkout@v4
+
+      - name: Hiển thị thông báo
+        run: |
+          echo "=== Workflow đang chạy ==="
+          echo "Message: ${{ github.event.inputs.message }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "User kích hoạt: ${{ github.actor }}"
