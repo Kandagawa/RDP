@@ -8,48 +8,53 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout repo
+    - name: Checkout repository
       uses: actions/checkout@v3
+
+    - name: Enable RDP & Firewall
+      run: |
+        # Bật RDP trên runner
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        # Mở firewall cho Remote Desktop
+        netsh advfirewall firewall set rule group="remote desktop" new enable=yes
 
     - name: Download Cloudflared
       run: |
         Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "$env:USERPROFILE\cloudflared.exe"
 
-    - name: Get VM info and start Cloudflare Tunnel
-      id: vm
+    - name: Start Cloudflare Tunnel and Get URL
+      id: tunnel
       run: |
-        # Lấy thông tin runner
+        $cloudflared = "$env:USERPROFILE\cloudflared.exe"
+        # Start tunnel và lấy link RDP
+        $rdp_link = & $cloudflared tunnel --url rdp://localhost:3389 --print-url
+        Write-Host "RDP_LINK=$rdp_link" | Out-File -FilePath "$env:GITHUB_ENV" -Encoding utf8
+
+        # Thông tin Windows runner
+        $username = "runneradmin"
+        $password = "Password123!"   # Bạn có thể đổi theo ý muốn
         $runner_name = $env:RUNNER_NAME
         $runner_os = $env:RUNNER_OS
-        $runner_arch = $env:RUNNER_ARCH
         $created_at = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-        # Tên user và pass Windows
-        $username = "runneradmin"
-        $password = "Password123!"  # bạn có thể đổi
-
-        # Start Cloudflare Tunnel và lấy link
-        $cloudflared = "$env:USERPROFILE\cloudflared.exe"
-        $rdp_link = & $cloudflared tunnel --url rdp://localhost:3389 --print-url
-
-        # Lưu vào env
-        Write-Host "RDP_LINK=$rdp_link" | Out-File -FilePath "$env:GITHUB_ENV" -Encoding utf8
+        # Lưu vào env để gửi Discord
         Write-Host "USERNAME=$username" | Out-File -FilePath "$env:GITHUB_ENV" -Encoding utf8
         Write-Host "PASSWORD=$password" | Out-File -FilePath "$env:GITHUB_ENV" -Encoding utf8
         Write-Host "RUNNER_NAME=$runner_name" | Out-File -FilePath "$env:GITHUB_ENV" -Encoding utf8
         Write-Host "RUNNER_OS=$runner_os" | Out-File -FilePath "$env:GITHUB_ENV" -Encoding utf8
         Write-Host "CREATED_AT=$created_at" | Out-File -FilePath "$env:GITHUB_ENV" -Encoding utf8
 
-    - name: Send full info to Discord
+    - name: Send Full Info to Discord
       run: |
         $discordWebhook = "https://discord.com/api/webhooks/1438779054550417511/6Q-W-E5GTLVoE0zkK8ZBQ3nrt-ZDWFSOSPw5058Y7MY0iDse5_oAS7wmBRMJoNR0UhYk"
-        $content = @"
-**Windows RDP VM Info**
-Link: $env:RDP_LINK
-Username: $env:USERNAME
-Password: $env:PASSWORD
-Runner Name: $env:RUNNER_NAME
-Runner OS: $env:RUNNER_OS
-Created At: $env:CREATED_AT
-"@
-        Invoke-RestMethod -Uri $discordWebhook -Method POST -Body (@{content=$content} | ConvertTo-Json) -ContentType "application/json"
+        $content = [PSCustomObject]@{
+            content = "**Windows RDP VM Info**`n"+
+                      "Link: $env:RDP_LINK`n"+
+                      "Username: $env:USERNAME`n"+
+                      "Password: $env:PASSWORD`n"+
+                      "Runner Name: $env:RUNNER_NAME`n"+
+                      "Runner OS: $env:RUNNER_OS`n"+
+                      "Created At: $env:CREATED_AT"
+        } | ConvertTo-Json -Compress
+
+        Invoke-RestMethod -Uri $discordWebhook -Method POST -Body $content -ContentType "application/json"
