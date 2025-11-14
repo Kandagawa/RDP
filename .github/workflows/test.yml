@@ -1,85 +1,45 @@
-name: CloudRDP-Ngrok
-
+name: Windows-RDP-Anyview
 on:
   workflow_dispatch:
-    inputs:
-      runtime_minutes:
-        description: "Thời gian giữ máy hoạt động (phút)"
-        required: false
-        default: "350"
 
 jobs:
-  rdp:
+  build:
     runs-on: windows-latest
-    timeout-minutes: 360
+
+    env:
+      RDP_USER: ${{ secrets.RDP_USER }}
+      RDP_PASS: ${{ secrets.RDP_PASS }}
 
     steps:
-      - name: Tạo user RDP
-        run: |
-          net user clouduser CloudPass123! /add
-          net localgroup "Administrators" clouduser /add
-          net localgroup "Remote Desktop Users" clouduser /add
+    - name: Enable RDP
+      run: |
+        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-      - name: Bật RDP và firewall
-        run: |
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          netsh advfirewall firewall add rule name="RDP3389" dir=in action=allow protocol=TCP localport=3389
+    - name: Set RDP User Password
+      run: |
+        net user $env:RDP_USER $env:RDP_PASS /add
+        net localgroup administrators $env:RDP_USER /add
 
-      - name: Tải Ngrok
-        run: |
-          Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip -DestinationPath .
+    - name: Download Anyview
+      run: |
+        Invoke-WebRequest `
+          -Uri "https://download.anyviewer.com/update/AnyViewer_Setup.exe" `
+          -OutFile "AnyViewer_Setup.exe"
 
-      - name: Cấu hình Ngrok authtoken
-        env:
-          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
-        run: |
-          .\ngrok.exe authtoken $Env:NGROK_AUTHTOKEN
+    - name: Install Anyview Silently
+      run: |
+        Start-Process -Wait -FilePath .\AnyViewer_Setup.exe -ArgumentList "/silent"
 
-      - name: Chạy Ngrok TCP tunnel và lấy URL
-        id: ngrok
-        run: |
-          # Chạy Ngrok TCP trong background
-          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden -PassThru
-
-          # Retry lấy URL với delay
-          $maxTries = 20
-          $try = 0
-          $url = $null
-          while (-not $url -and $try -lt $maxTries) {
-              Start-Sleep -Seconds 3
-              $try++
-              try {
-                  $tunnels = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
-                  if ($tunnels.tunnels.Count -gt 0) {
-                      $url = $tunnels.tunnels[0].public_url
-                  }
-              } catch {
-                  # Nếu API chưa ready, bỏ qua
-              }
-          }
-
-          if (-not $url) {
-              Write-Host "❌ Không lấy được URL Ngrok!"
-              exit 1
-          }
-
-          Write-Output "url=$url" >> $env:GITHUB_OUTPUT
-
-      - name: In thông tin RDP
-        run: |
-          Write-Output "=========================== "
-          Write-Output "     THÔNG TIN RDP"
-          Write-Output "=========================== "
-          Write-Output "User     : clouduser"
-          Write-Output "Pass     : CloudPass123!"
-          Write-Output "RDP Link : ${{ steps.ngrok.outputs.url }}"
-          Write-Output "=========================== "
-
-      - name: Giữ máy Online
-        run: |
-          $end = (Get-Date).AddMinutes(${ { github.event.inputs.runtime_minutes } })
-          while ((Get-Date) -lt $end) {
-              Start-Sleep -Seconds 30
-          }
+    - name: Show Connection Information
+      run: |
+        $ip = (Invoke-WebRequest -uri "http://ipinfo.io/ip").Content.Trim()
+        Write-Host "============================="
+        Write-Host " 🎯 RDP:"
+        Write-Host "   ➤  $ip:3389"
+        Write-Host "   ➤  User: $env:RDP_USER"
+        Write-Host "   ➤  Pass: $env:RDP_PASS"
+        Write-Host ""
+        Write-Host " 🎯 Anyview đã được cài."
+        Write-Host "   ➤ Hãy mở Anyview trên máy và tạo tài khoản / đăng nhập."
+        Write-Host "============================="
