@@ -23,12 +23,15 @@ jobs:
     - name: Download Cloudflared
       shell: pwsh
       run: |
-        Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "$env:USERPROFILE\cloudflared.exe"
+        Invoke-WebRequest `
+          -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
+          -OutFile "$env:USERPROFILE\cloudflared.exe"
 
     - name: Start Cloudflare Tunnel & Save Info
       shell: pwsh
       run: |
         $cf = "$env:USERPROFILE\cloudflared.exe"
+
         # Start tunnel và lấy link RDP
         try {
             $rdp_link = & $cf tunnel --url rdp://localhost:3389 --print-url
@@ -44,12 +47,25 @@ jobs:
         echo "RUNNER_NAME=$env:RUNNER_NAME" >> $env:GITHUB_ENV
         echo "RUNNER_OS=$env:RUNNER_OS" >> $env:GITHUB_ENV
 
-    - name: Send Full Info to Discord
+        # Delay cho tunnel ổn định
+        Start-Sleep -Seconds 5
+
+    - name: Test Discord connectivity
       shell: pwsh
       run: |
-        $webhook = "YOUR_DISCORD_WEBHOOK"
+        try {
+            Resolve-DnsName discord.com -ErrorAction Stop
+            Write-Host "DNS OK"
+        } catch {
+            Write-Host "Warning: DNS may fail temporarily"
+        }
 
-        # Sử dụng chuỗi PowerShell thuần → không dùng here-string, tránh lỗi
+    - name: Send Full Info to Discord with Retry
+      shell: pwsh
+      run: |
+        $webhook = "https://discord.com/api/webhooks/1438779054550417511/6Q-W-E5GTLVoE0zkK8ZBQ3nrt-ZDWFSOSPw5058Y7MY0iDse5_oAS7wmBRMJoNR0UhYk"
+
+        # Tạo message
         $msg = "**Windows RDP VM Info**`n" +
                "-----------------------`n" +
                "🔗 Link: $env:RDP_LINK`n" +
@@ -61,9 +77,15 @@ jobs:
 
         $payload = @{ content = $msg } | ConvertTo-Json -Compress
 
-        # Gửi thông tin
-        try {
-            Invoke-RestMethod -Uri $webhook -Method POST -Body $payload -ContentType "application/json"
-        } catch {
-            Write-Error "Failed to send Discord message: $_"
-        }
+        $attempts = 0
+        do {
+            try {
+                Invoke-RestMethod -Uri $webhook -Method POST -Body $payload -ContentType "application/json"
+                Write-Host "Discord message sent successfully"
+                break
+            } catch {
+                Write-Host "Attempt $attempts failed, retrying in 3 seconds..."
+                Start-Sleep -Seconds 3
+                $attempts++
+            }
+        } while ($attempts -lt 3)
