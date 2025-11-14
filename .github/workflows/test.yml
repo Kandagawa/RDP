@@ -46,8 +46,8 @@ jobs:
       - name: Tạo Tunnel TCP 3389
         id: tunnel
         run: |
-          # Chạy ngrok trong background
-          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -PassThru -WindowStyle Hidden
+          # Chạy Ngrok trong same session background job
+          Start-Job -ScriptBlock { .\ngrok.exe tcp 3389 } | Out-Null
 
           $maxTries = 20       # thử tối đa 20 lần (~60s)
           $try = 0
@@ -56,7 +56,6 @@ jobs:
           while (-not $url -and $try -lt $maxTries) {
               Start-Sleep -Seconds 3
               $try++
-
               try {
                   $tunnels = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
                   $url = $tunnels.tunnels[0].public_url
