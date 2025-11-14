@@ -1,4 +1,4 @@
-name: Windows RDP Info in Logs
+name: Windows RDP Full Info to Discord
 
 on:
   workflow_dispatch:
@@ -14,40 +14,61 @@ jobs:
     - name: Enable RDP & Firewall
       shell: pwsh
       run: |
-        # Bật RDP trên runner
         Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-        # Mở firewall cho Remote Desktop
         netsh advfirewall firewall set rule group="remote desktop" new enable=yes
 
     - name: Download Cloudflared
       shell: pwsh
       run: |
-        Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "$env:USERPROFILE\cloudflared.exe"
+        Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "$env:USERPROFILE\cloudflared.exe"
 
-    - name: Start Cloudflare Tunnel and Save Info
+    - name: Start Cloudflare Tunnel & Save Info
       shell: pwsh
       run: |
-        $cloudflared = "$env:USERPROFILE\cloudflared.exe"
-        # Start tunnel và lấy link RDP
+        $cf = "$env:USERPROFILE\cloudflared.exe"
+
         try {
-            $rdp_link = & $cloudflared tunnel --url rdp://localhost:3389 --print-url
+            $rdp_link = & $cf tunnel --url rdp://localhost:3389 --print-url
         } catch {
             $rdp_link = "FAILED_TO_GET_LINK"
         }
 
-        # Thông tin Windows runner
-        $username = "runneradmin"
-        $password = "Password123!"
-        $runner_name = $env:RUNNER_NAME
-        $runner_os = $env:RUNNER_OS
-        $created_at = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        Add-Content -Path $env:GITHUB_ENV -Value "RDP_LINK=$rdp_link"
+        Add-Content -Path $env:GITHUB_ENV -Value "USERNAME=runneradmin"
+        Add-Content -Path $env:GITHUB_ENV -Value "PASSWORD=Password123!"
+        Add-Content -Path $env:GITHUB_ENV -Value "CREATED_AT=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        Add-Content -Path $env:GITHUB_ENV -Value "RUNNER_NAME=$env:RUNNER_NAME"
+        Add-Content -Path $env:GITHUB_ENV -Value "RUNNER_OS=$env:RUNNER_OS"
 
-        # Log info ra console
-        Write-Host "===== Windows RDP VM Info ====="
-        Write-Host "RDP Link: $rdp_link"
-        Write-Host "Username: $username"
-        Write-Host "Password: $password"
-        Write-Host "Runner Name: $runner_name"
-        Write-Host "Runner OS: $runner_os"
-        Write-Host "Created At: $created_at"
-        Write-Host "==============================="
+        Start-Sleep -Seconds 8   # Delay để tunnel ổn định
+
+    - name: Send Full Info to Discord with Retry
+      shell: pwsh
+      run: |
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+        $webhook = "https://discord.com/api/webhooks/1438785138170269787/2gW1Ln2I362LHpT5hIex2bmoMSrGyy536licIWsrznhgX0kh2i5oRvaT_sJ6DcY5sS3D"
+
+        $msg = "**Windows RDP VM Info**`n" +
+               "-----------------------`n" +
+               "🔗 Link: $env:RDP_LINK`n" +
+               "👤 Username: $env:USERNAME`n" +
+               "🔐 Password: $env:PASSWORD`n" +
+               "🖥 Runner Name: $env:RUNNER_NAME`n" +
+               "💽 Runner OS: $env:RUNNER_OS`n" +
+               "🕒 Created At: $env:CREATED_AT"
+
+        $payload = @{ content = $msg } | ConvertTo-Json -Compress
+
+        $attempt = 0
+        while ($attempt -lt 5) {
+            try {
+                Invoke-RestMethod -Uri $webhook -Method POST -Body $payload -ContentType "application/json"
+                Write-Host "Message sent!"
+                break
+            } catch {
+                Write-Host "Send failed. Retry in 4s..."
+                Start-Sleep -Seconds 4
+                $attempt++
+            }
+        }
