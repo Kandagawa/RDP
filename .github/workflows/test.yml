@@ -1,1 +1,58 @@
-j
+name: CloudRDP
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_minutes:
+        description: "Thời gian giữ máy hoạt động"
+        required: false
+        default: "350"
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Tạo user RDP
+        run: |
+          net user clouduser CloudPass123! /add
+          net localgroup "Administrators" clouduser /add
+          net localgroup "Remote Desktop Users" clouduser /add
+
+      - name: Bật RDP
+        run: |
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          netsh advfirewall firewall add rule name="RDP3389" dir=in action=allow protocol=TCP localport=3389
+
+      - name: Tải Cloudflared
+        run: |
+          Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
+
+      - name: Tạo Tunnel Cloudflared (RDP)
+        id: tunnel
+        run: |
+          $output = & .\cloudflared.exe tunnel --url tcp://localhost:3389 --no-autoupdate 2>&1
+          Write-Output "RAW OUTPUT:"
+          Write-Output $output
+
+          $tcp = ($output | Select-String -Pattern "tcp://.*").Matches.Value
+          echo "tcp=$tcp" >> $env:GITHUB_OUTPUT
+
+      - name: In thông tin RDP
+        run: |
+          Write-Output "=========================== "
+          Write-Output "     THÔNG TIN RDP"
+          Write-Output "=========================== "
+          Write-Output "User     : clouduser"
+          Write-Output "Pass     : CloudPass123!"
+          Write-Output "RDP Link : ${{ steps.tunnel.outputs.tcp }}"
+          Write-Output "=========================== "
+
+      - name: Giữ máy Online
+        run: |
+          $end = (Get-Date).AddMinutes(${ { github.event.inputs.runtime_minutes } })
+          while ((Get-Date) -lt $end) {
+            Start-Sleep -Seconds 30
+          }
