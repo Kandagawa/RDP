@@ -1,4 +1,4 @@
-name: CloudRDP-Ngrok-Stdout
+name: CloudRDP-Ngrok-Stable
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
           net localgroup "Administrators" clouduser /add
           net localgroup "Remote Desktop Users" clouduser /add
 
-      - name: Bật RDP & Service
+      - name: Bật RDP & Firewall
         run: |
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
           -Name "fDenyTSConnections" -Value 0
@@ -28,7 +28,6 @@ jobs:
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           netsh advfirewall firewall add rule name="RDP3389" dir=in action=allow protocol=TCP localport=3389
 
-          # Bật Remote Desktop Service
           Set-Service -Name TermService -StartupType Automatic
           Start-Service -Name TermService
 
@@ -43,35 +42,33 @@ jobs:
         env:
           NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
 
-      - name: Tạo Tunnel TCP 3389 và lấy URL từ stdout
+      - name: Tạo Tunnel TCP 3389 và lấy URL
         id: tunnel
         shell: pwsh
         run: |
-          # Chạy ngrok TCP và đọc stdout
-          $ngrokProcess = Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" `
-            -NoNewWindow -PassThru -RedirectStandardOutput "ngrok_out.txt"
+          # Start Ngrok trong background job, ghi stdout ra file
+          $job = Start-Job -ScriptBlock { .\ngrok.exe tcp 3389 } 
 
-          $maxTries = 20
+          $maxTries = 30   # thử tối đa 30 lần (~90s)
           $try = 0
           $url = $null
 
           while (-not $url -and $try -lt $maxTries) {
               Start-Sleep -Seconds 3
               $try++
-              if (Test-Path "ngrok_out.txt") {
-                  $content = Get-Content "ngrok_out.txt"
-                  foreach ($line in $content) {
-                      if ($line -match "tcp://.*") {
-                          $url = $Matches[0]
-                          break
-                      }
+              # đọc stdout live
+              $content = Get-Content "$Env:USERPROFILE\AppData\Local\Temp\ngrok_stdout.txt" -ErrorAction SilentlyContinue
+              foreach ($line in $content) {
+                  if ($line -match "tcp://.*") {
+                      $url = $Matches[0]
+                      break
                   }
               }
           }
 
-          if (-not $url) {
+          if (-not $url) { 
               Write-Host "❌ Không lấy được URL Ngrok!"
-              exit 1
+              Exit 1
           }
 
           Write-Output "url=$url" >> $env:GITHUB_OUTPUT
