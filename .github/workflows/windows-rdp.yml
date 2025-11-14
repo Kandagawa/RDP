@@ -14,19 +14,22 @@ jobs:
     - name: Enable RDP & Firewall
       shell: pwsh
       run: |
-        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
+          -Name "fDenyTSConnections" -Value 0
         netsh advfirewall firewall set rule group="remote desktop" new enable=yes
 
     - name: Download Cloudflared
       shell: pwsh
       run: |
-        Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "$env:USERPROFILE\cloudflared.exe"
+        Invoke-WebRequest `
+          -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
+          -OutFile "$env:USERPROFILE\cloudflared.exe"
 
-    - name: Start Cloudflare Tunnel and Save Output
+    - name: Start Cloudflare Tunnel & Save Info
       shell: pwsh
       run: |
-        $cloud = "$env:USERPROFILE\cloudflared.exe"
-        $rdp_link = & $cloud tunnel --url rdp://localhost:3389 --print-url
+        $cf = "$env:USERPROFILE\cloudflared.exe"
+        $rdp_link = & $cf tunnel --url rdp://localhost:3389 --print-url
 
         echo "RDP_LINK=$rdp_link" >> $env:GITHUB_ENV
         echo "USERNAME=runneradmin" >> $env:GITHUB_ENV
@@ -40,13 +43,20 @@ jobs:
       run: |
         $webhook = "https://discord.com/api/webhooks/1438779054550417511/6Q-W-E5GTLVoE0zkK8ZBQ3nrt-ZDWFSOSPw5058Y7MY0iDse5_oAS7wmBRMJoNR0UhYk"
 
-        $msg = "**Windows RDP VM Info**`n" +
-               "Link: $env:RDP_LINK`n" +
-               "Username: $env:USERNAME`n" +
-               "Password: $env:PASSWORD`n" +
-               "Runner Name: $env:RUNNER_NAME`n" +
-               "Runner OS: $env:RUNNER_OS`n" +
-               "Created At: $env:CREATED_AT"
+        # Tin nhắn gửi Discord dạng Here-String sạch lỗi
+        $msg = @"
+**Windows RDP VM Info**
+-----------------------
+🔗 Link: $env:RDP_LINK
+👤 Username: $env:USERNAME
+🔐 Password: $env:PASSWORD
+🖥 Runner Name: $env:RUNNER_NAME
+💽 Runner OS: $env:RUNNER_OS
+🕒 Created At: $env:CREATED_AT
+"@
 
-        $payload = @{ content = $msg } | ConvertTo-Json
+        # Convert to JSON chuẩn
+        $payload = @{ content = $msg } | ConvertTo-Json -Compress
+
+        # Gửi tin nhắn
         Invoke-RestMethod -Uri $webhook -Method POST -Body $payload -ContentType "application/json"
