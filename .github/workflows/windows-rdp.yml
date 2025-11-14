@@ -1,7 +1,7 @@
 name: Windows RDP Full Info to Discord
 
 on:
-  workflow_dispatch:   # Nút Run workflow xuất hiện
+  workflow_dispatch:   # Cho phép nút Run workflow xuất hiện
 
 jobs:
   rdp:
@@ -53,17 +53,17 @@ jobs:
     - name: Test Discord connectivity
       shell: pwsh
       run: |
-        try {
+        try { 
             Resolve-DnsName discord.com -ErrorAction Stop
-            Write-Host "DNS OK"
-        } catch {
-            Write-Host "Warning: DNS may fail temporarily"
+            Write-Host "DNS OK" 
+        } catch { 
+            Write-Host "Warning: DNS may fail temporarily" 
         }
 
     - name: Send Full Info to Discord with Retry
       shell: pwsh
       run: |
-        $webhook = "https://discord.com/api/webhooks/1438779054550417511/6Q-W-E5GTLVoE0zkK8ZBQ3nrt-ZDWFSOSPw5058Y7MY0iDse5_oAS7wmBRMJoNR0UhYk"
+        $webhook = "https://discord.com/api/webhooks/1438785138170269787/2gW1Ln2I362LHpT5hIex2bmoMSrGyy536licIWsrznhgX0kh2i5oRvaT_sJ6DcY5sS3D"
 
         # Tạo message
         $msg = "**Windows RDP VM Info**`n" +
