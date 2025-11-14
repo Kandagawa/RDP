@@ -1,4 +1,4 @@
-name: CloudRDP
+name: CloudRDP-Ngrok
 
 on:
   workflow_dispatch:
@@ -20,46 +20,54 @@ jobs:
           net localgroup "Administrators" clouduser /add
           net localgroup "Remote Desktop Users" clouduser /add
 
-      - name: Bật RDP mặc định (3389)
+      - name: Bật RDP
         run: |
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
+          -Name "fDenyTSConnections" -Value 0
+
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           netsh advfirewall firewall add rule name="RDP3389" dir=in action=allow protocol=TCP localport=3389
 
-      - name: Tải Cloudflared
+      - name: Tải Ngrok
         run: |
-          Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
+          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+          Expand-Archive ngrok.zip -DestinationPath .
 
-      - name: Tạo Tunnel Cloudflared TCP (không dùng cổng 3389)
+      - name: Đăng nhập Ngrok
+        run: |
+          .\ngrok.exe config add-authtoken $Env:NGROK_AUTHTOKEN
+        env:
+          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+
+      - name: Tạo Tunnel TCP 3389
         id: tunnel
         run: |
-          $localPort = 3389
-          $remotePort = 3390
+          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
 
-          Write-Output "🔗 Đang tạo tunnel TCP…"
-          $output = & .\cloudflared.exe tunnel --url tcp://localhost:$localPort --no-autoupdate --metrics localhost:0 --protocol http2 --remote-port $remotePort 2>&1
+          $url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels).Content |
+            ConvertFrom-Json |
+            Select-Object -ExpandProperty tunnels |
+            Select-Object -ExpandProperty public_url
 
-          Write-Output "RAW OUTPUT:"
-          Write-Output $output
-
-          $tcp = ($output | Select-String -Pattern "tcp://.*").Matches.Value
-          if (-not $tcp) {
-            Write-Output "❌ Không tìm thấy URL TCP trong output."
+          if (-not $url) {
+            Write-Host "❌ Không lấy được URL Ngrok!"
             exit 1
           }
-          echo "tcp=$tcp" >> $env:GITHUB_OUTPUT
 
-      - name: In thông tin RDP
+          Write-Output "url=$url" >> $env:GITHUB_OUTPUT
+
+      - name: Xuất thông tin RDP
         run: |
-          Write-Output "=========================== "
-          Write-Output "          THÔNG TIN RDP"
-          Write-Output "=========================== "
-          Write-Output "User     : clouduser"
-          Write-Output "Pass     : CloudPass123!"
-          Write-Output "RDP Link : ${{ steps.tunnel.outputs.tcp }}"
-          Write-Output "=========================== "
+          Write-Host "==========================="
+          Write-Host "         CLOUD RDP"
+          Write-Host "==========================="
+          Write-Host "User: clouduser"
+          Write-Host "Pass: CloudPass123!"
+          Write-Host "RDP : ${{ steps.tunnel.outputs.url }}"
+          Write-Host "==========================="
 
-      - name: Giữ máy Online
+      - name: Giữ máy hoạt động
         run: |
           $end = (Get-Date).AddMinutes(${ { github.event.inputs.runtime_minutes } })
           while ((Get-Date) -lt $end) {
