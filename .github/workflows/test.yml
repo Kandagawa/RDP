@@ -20,7 +20,7 @@ jobs:
           net localgroup "Administrators" clouduser /add
           net localgroup "Remote Desktop Users" clouduser /add
 
-      - name: Bật RDP
+      - name: Bật RDP mặc định (3389)
         run: |
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
@@ -30,28 +30,29 @@ jobs:
         run: |
           Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
 
-      - name: Tạo Tunnel Cloudflared (RDP Nhanh)
+      - name: Tạo Tunnel Cloudflared TCP (không dùng cổng 3389)
         id: tunnel
         run: |
-          Start-Process ".\cloudflared.exe" `
-            -ArgumentList "access", "tcp", "--hostname", "auto", "--url", "localhost:3389" `
-            -NoNewWindow -RedirectStandardOutput tunnel.log
+          $localPort = 3389
+          $remotePort = 3390
 
-          Start-Sleep -Seconds 5
+          Write-Output "🔗 Đang tạo tunnel TCP…"
+          $output = & .\cloudflared.exe tunnel --url tcp://localhost:$localPort --no-autoupdate --metrics localhost:0 --protocol http2 --remote-port $remotePort 2>&1
 
-          $line = Get-Content tunnel.log | Select-String "tcp://"
-          if (-not $line) {
-            Write-Output "Không tìm thấy URL TCP"
+          Write-Output "RAW OUTPUT:"
+          Write-Output $output
+
+          $tcp = ($output | Select-String -Pattern "tcp://.*").Matches.Value
+          if (-not $tcp) {
+            Write-Output "❌ Không tìm thấy URL TCP trong output."
             exit 1
           }
-
-          $tcp = $line.Matches.Value
           echo "tcp=$tcp" >> $env:GITHUB_OUTPUT
 
       - name: In thông tin RDP
         run: |
           Write-Output "=========================== "
-          Write-Output "     THÔNG TIN RDP"
+          Write-Output "          THÔNG TIN RDP"
           Write-Output "=========================== "
           Write-Output "User     : clouduser"
           Write-Output "Pass     : CloudPass123!"
