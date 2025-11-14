@@ -1,10 +1,10 @@
-name: CloudRDP-Cloudflared
+name: CloudRDP-Ngrok
 
 on:
   workflow_dispatch:
     inputs:
       runtime_minutes:
-        description: "Thời gian giữ máy hoạt động"
+        description: "Thời gian giữ máy hoạt động (phút)"
         required: false
         default: "350"
 
@@ -20,51 +20,66 @@ jobs:
           net localgroup "Administrators" clouduser /add
           net localgroup "Remote Desktop Users" clouduser /add
 
-      - name: Bật RDP & Firewall
+      - name: Bật RDP và firewall
         run: |
-          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
-            -Name "fDenyTSConnections" -Value 0
-
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           netsh advfirewall firewall add rule name="RDP3389" dir=in action=allow protocol=TCP localport=3389
 
-          Set-Service -Name TermService -StartupType Automatic
-          Start-Service -Name TermService
-
-      - name: Tải Cloudflared
+      - name: Tải Ngrok
         run: |
-          Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
+          Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
+          Expand-Archive ngrok.zip -DestinationPath .
 
-      - name: Tạo Tunnel TCP 3389 & Lấy URL
-        id: tunnel
-        shell: pwsh
+      - name: Cấu hình Ngrok authtoken
+        env:
+          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
         run: |
-          $output = & .\cloudflared.exe tunnel --url tcp://localhost:3389 --no-autoupdate 2>&1
-          Write-Output "RAW OUTPUT:"
-          Write-Output $output
+          .\ngrok.exe authtoken $Env:NGROK_AUTHTOKEN
 
-          # Parse URL TCP từ stdout
-          $tcp = ($output | Select-String -Pattern "tcp://.*").Matches.Value
-          if (-not $tcp) {
-              Write-Host "❌ Không tìm thấy URL TCP!"
+      - name: Chạy Ngrok TCP tunnel và lấy URL
+        id: ngrok
+        run: |
+          # Chạy Ngrok TCP trong background
+          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden -PassThru
+
+          # Retry lấy URL với delay
+          $maxTries = 20
+          $try = 0
+          $url = $null
+          while (-not $url -and $try -lt $maxTries) {
+              Start-Sleep -Seconds 3
+              $try++
+              try {
+                  $tunnels = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
+                  if ($tunnels.tunnels.Count -gt 0) {
+                      $url = $tunnels.tunnels[0].public_url
+                  }
+              } catch {
+                  # Nếu API chưa ready, bỏ qua
+              }
+          }
+
+          if (-not $url) {
+              Write-Host "❌ Không lấy được URL Ngrok!"
               exit 1
           }
 
-          Write-Output "url=$tcp" >> $env:GITHUB_OUTPUT
+          Write-Output "url=$url" >> $env:GITHUB_OUTPUT
 
-      - name: Xuất thông tin RDP
+      - name: In thông tin RDP
         run: |
-          Write-Host "==========================="
-          Write-Host "         CLOUD RDP"
-          Write-Host "==========================="
-          Write-Host "User: clouduser"
-          Write-Host "Pass: CloudPass123!"
-          Write-Host "RDP : ${{ steps.tunnel.outputs.url }}"
-          Write-Host "==========================="
+          Write-Output "=========================== "
+          Write-Output "     THÔNG TIN RDP"
+          Write-Output "=========================== "
+          Write-Output "User     : clouduser"
+          Write-Output "Pass     : CloudPass123!"
+          Write-Output "RDP Link : ${{ steps.ngrok.outputs.url }}"
+          Write-Output "=========================== "
 
-      - name: Giữ máy hoạt động
+      - name: Giữ máy Online
         run: |
           $end = (Get-Date).AddMinutes(${ { github.event.inputs.runtime_minutes } })
           while ((Get-Date) -lt $end) {
-            Start-Sleep -Seconds 30
+              Start-Sleep -Seconds 30
           }
