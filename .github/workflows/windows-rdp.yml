@@ -1,7 +1,7 @@
-name: Windows RDP Full Info to Discord
+name: Windows RDP Info in Logs
 
 on:
-  workflow_dispatch:   # Cho phép nút Run workflow xuất hiện
+  workflow_dispatch:
 
 jobs:
   rdp:
@@ -14,78 +14,40 @@ jobs:
     - name: Enable RDP & Firewall
       shell: pwsh
       run: |
-        # Bật RDP
-        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
-          -Name "fDenyTSConnections" -Value 0
+        # Bật RDP trên runner
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
         # Mở firewall cho Remote Desktop
         netsh advfirewall firewall set rule group="remote desktop" new enable=yes
 
     - name: Download Cloudflared
       shell: pwsh
       run: |
-        Invoke-WebRequest `
-          -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
-          -OutFile "$env:USERPROFILE\cloudflared.exe"
+        Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "$env:USERPROFILE\cloudflared.exe"
 
-    - name: Start Cloudflare Tunnel & Save Info
+    - name: Start Cloudflare Tunnel and Save Info
       shell: pwsh
       run: |
-        $cf = "$env:USERPROFILE\cloudflared.exe"
-
+        $cloudflared = "$env:USERPROFILE\cloudflared.exe"
         # Start tunnel và lấy link RDP
         try {
-            $rdp_link = & $cf tunnel --url rdp://localhost:3389 --print-url
+            $rdp_link = & $cloudflared tunnel --url rdp://localhost:3389 --print-url
         } catch {
             $rdp_link = "FAILED_TO_GET_LINK"
         }
 
-        # Lưu biến môi trường
-        echo "RDP_LINK=$rdp_link" >> $env:GITHUB_ENV
-        echo "USERNAME=runneradmin" >> $env:GITHUB_ENV
-        echo "PASSWORD=Password123!" >> $env:GITHUB_ENV
-        echo "CREATED_AT=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" >> $env:GITHUB_ENV
-        echo "RUNNER_NAME=$env:RUNNER_NAME" >> $env:GITHUB_ENV
-        echo "RUNNER_OS=$env:RUNNER_OS" >> $env:GITHUB_ENV
+        # Thông tin Windows runner
+        $username = "runneradmin"
+        $password = "Password123!"
+        $runner_name = $env:RUNNER_NAME
+        $runner_os = $env:RUNNER_OS
+        $created_at = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-        # Delay cho tunnel ổn định
-        Start-Sleep -Seconds 5
-
-    - name: Test Discord connectivity
-      shell: pwsh
-      run: |
-        try { 
-            Resolve-DnsName discord.com -ErrorAction Stop
-            Write-Host "DNS OK" 
-        } catch { 
-            Write-Host "Warning: DNS may fail temporarily" 
-        }
-
-    - name: Send Full Info to Discord with Retry
-      shell: pwsh
-      run: |
-        $webhook = "https://discord.com/api/webhooks/1438785138170269787/2gW1Ln2I362LHpT5hIex2bmoMSrGyy536licIWsrznhgX0kh2i5oRvaT_sJ6DcY5sS3D"
-
-        # Tạo message
-        $msg = "**Windows RDP VM Info**`n" +
-               "-----------------------`n" +
-               "🔗 Link: $env:RDP_LINK`n" +
-               "👤 Username: $env:USERNAME`n" +
-               "🔐 Password: $env:PASSWORD`n" +
-               "🖥 Runner Name: $env:RUNNER_NAME`n" +
-               "💽 Runner OS: $env:RUNNER_OS`n" +
-               "🕒 Created At: $env:CREATED_AT"
-
-        $payload = @{ content = $msg } | ConvertTo-Json -Compress
-
-        $attempts = 0
-        do {
-            try {
-                Invoke-RestMethod -Uri $webhook -Method POST -Body $payload -ContentType "application/json"
-                Write-Host "Discord message sent successfully"
-                break
-            } catch {
-                Write-Host "Attempt $attempts failed, retrying in 3 seconds..."
-                Start-Sleep -Seconds 3
-                $attempts++
-            }
-        } while ($attempts -lt 3)
+        # Log info ra console
+        Write-Host "===== Windows RDP VM Info ====="
+        Write-Host "RDP Link: $rdp_link"
+        Write-Host "Username: $username"
+        Write-Host "Password: $password"
+        Write-Host "Runner Name: $runner_name"
+        Write-Host "Runner OS: $runner_os"
+        Write-Host "Created At: $created_at"
+        Write-Host "==============================="
