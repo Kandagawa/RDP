@@ -20,27 +20,26 @@ jobs:
     - name: Download Cloudflared
       shell: pwsh
       run: |
-        Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "$env:USERPROFILE\cloudflared.exe"
+        Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
+          -OutFile "$env:USERPROFILE\cloudflared.exe"
 
     - name: Start Cloudflare Tunnel & Save Info
       shell: pwsh
       run: |
         $cf = "$env:USERPROFILE\cloudflared.exe"
 
-        try {
-            $rdp_link = & $cf tunnel --url rdp://localhost:3389 --print-url
-        } catch {
-            $rdp_link = "FAILED_TO_GET_LINK"
-        }
+        # Start Cloudflare TCP tunnel RDP (background)
+        Start-Process -NoNewWindow -FilePath $cf -ArgumentList "tunnel run --url tcp://localhost:3389"
 
-        Add-Content -Path $env:GITHUB_ENV -Value "RDP_LINK=$rdp_link"
+        # Lưu thông tin runner
+        Add-Content -Path $env:GITHUB_ENV -Value "RDP_LINK=Tunnel started locally (check Cloudflare dashboard for public URL)"
         Add-Content -Path $env:GITHUB_ENV -Value "USERNAME=runneradmin"
         Add-Content -Path $env:GITHUB_ENV -Value "PASSWORD=Password123!"
         Add-Content -Path $env:GITHUB_ENV -Value "CREATED_AT=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
         Add-Content -Path $env:GITHUB_ENV -Value "RUNNER_NAME=$env:RUNNER_NAME"
         Add-Content -Path $env:GITHUB_ENV -Value "RUNNER_OS=$env:RUNNER_OS"
 
-        Start-Sleep -Seconds 8   # Delay để tunnel ổn định
+        Start-Sleep -Seconds 8
 
     - name: Send Full Info to Discord with Retry
       shell: pwsh
@@ -72,3 +71,14 @@ jobs:
                 $attempt++
             }
         }
+
+    - name: Output Info to Log
+      shell: pwsh
+      run: |
+        Write-Host "===== Windows RDP VM Info ====="
+        Write-Host "Link: $env:RDP_LINK"
+        Write-Host "Username: $env:USERNAME"
+        Write-Host "Password: $env:PASSWORD"
+        Write-Host "Runner Name: $env:RUNNER_NAME"
+        Write-Host "Runner OS: $env:RUNNER_OS"
+        Write-Host "Created At: $env:CREATED_AT"
