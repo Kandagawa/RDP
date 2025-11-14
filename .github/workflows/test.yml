@@ -30,14 +30,22 @@ jobs:
         run: |
           Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
 
-      - name: Tạo Tunnel Cloudflared (RDP)
+      - name: Tạo Tunnel Cloudflared (RDP Nhanh)
         id: tunnel
         run: |
-          $output = & .\cloudflared.exe tunnel --url tcp://localhost:3389 --no-autoupdate 2>&1
-          Write-Output "RAW OUTPUT:"
-          Write-Output $output
+          Start-Process ".\cloudflared.exe" `
+            -ArgumentList "access", "tcp", "--hostname", "auto", "--url", "localhost:3389" `
+            -NoNewWindow -RedirectStandardOutput tunnel.log
 
-          $tcp = ($output | Select-String -Pattern "tcp://.*").Matches.Value
+          Start-Sleep -Seconds 5
+
+          $line = Get-Content tunnel.log | Select-String "tcp://"
+          if (-not $line) {
+            Write-Output "Không tìm thấy URL TCP"
+            exit 1
+          }
+
+          $tcp = $line.Matches.Value
           echo "tcp=$tcp" >> $env:GITHUB_OUTPUT
 
       - name: In thông tin RDP
