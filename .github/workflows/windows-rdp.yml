@@ -12,52 +12,41 @@ jobs:
       uses: actions/checkout@v3
 
     - name: Enable RDP & Firewall
+      shell: pwsh
       run: |
-        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
-          -Name "fDenyTSConnections" -Value 0
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
         netsh advfirewall firewall set rule group="remote desktop" new enable=yes
 
     - name: Download Cloudflared
+      shell: pwsh
       run: |
-        Invoke-WebRequest `
-          -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
-          -OutFile "$env:USERPROFILE\cloudflared.exe"
+        Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "$env:USERPROFILE\cloudflared.exe"
 
     - name: Start Cloudflare Tunnel and Save Output
-      id: tunnel
+      shell: pwsh
       run: |
-        $cloudflared = "$env:USERPROFILE\cloudflared.exe"
+        $cloud = "$env:USERPROFILE\cloudflared.exe"
+        $rdp_link = & $cloud tunnel --url rdp://localhost:3389 --print-url
 
-        # Lấy link RDP chính xác
-        $rdp_link = & $cloudflared tunnel --url rdp://localhost:3389 --print-url
         echo "RDP_LINK=$rdp_link" >> $env:GITHUB_ENV
-
-        # Set thông tin
-        $username = "runneradmin"
-        $password = "Password123!"
-        $created_at = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
-        echo "USERNAME=$username" >> $env:GITHUB_ENV
-        echo "PASSWORD=$password" >> $env:GITHUB_ENV
-        echo "CREATED_AT=$created_at" >> $env:GITHUB_ENV
+        echo "USERNAME=runneradmin" >> $env:GITHUB_ENV
+        echo "PASSWORD=Password123!" >> $env:GITHUB_ENV
+        echo "CREATED_AT=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" >> $env:GITHUB_ENV
         echo "RUNNER_NAME=$env:RUNNER_NAME" >> $env:GITHUB_ENV
         echo "RUNNER_OS=$env:RUNNER_OS" >> $env:GITHUB_ENV
 
     - name: Send Full Info to Discord
+      shell: pwsh
       run: |
-        $discordWebhook = "https://discord.com/api/webhooks/1438779054550417511/6Q-W-E5GTLVoE0zkK8ZBQ3nrt-ZDWFSOSPw5058Y7MY0iDse5_oAS7wmBRMJoNR0UhYk"
+        $webhook = "https://discord.com/api/webhooks/1438779054550417511/6Q-W-E5GTLVoE0zkK8ZBQ3nrt-ZDWFSOSPw5058Y7MY0iDse5_oAS7wmBRMJoNR0UhYk"
 
-        $msg = @"
-**Windows RDP VM Info**
----------------------------------
-🔗 **Link:** $env:RDP_LINK
-👤 **Username:** $env:USERNAME
-🔐 **Password:** $env:PASSWORD
-
-🖥 **Runner Name:** $env:RUNNER_NAME
-💽 **Runner OS:** $env:RUNNER_OS
-🕒 **Created At:** $env:CREATED_AT
-"@
+        $msg = "**Windows RDP VM Info**`n" +
+               "Link: $env:RDP_LINK`n" +
+               "Username: $env:USERNAME`n" +
+               "Password: $env:PASSWORD`n" +
+               "Runner Name: $env:RUNNER_NAME`n" +
+               "Runner OS: $env:RUNNER_OS`n" +
+               "Created At: $env:CREATED_AT"
 
         $payload = @{ content = $msg } | ConvertTo-Json
-        Invoke-RestMethod -Uri $discordWebhook -Method POST -Body $payload -ContentType "application/json"
+        Invoke-RestMethod -Uri $webhook -Method POST -Body $payload -ContentType "application/json"
