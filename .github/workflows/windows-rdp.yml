@@ -23,25 +23,34 @@ jobs:
         Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
           -OutFile "$env:USERPROFILE\cloudflared.exe"
 
-    - name: Start Cloudflare Tunnel & Save Info
+    - name: Start Cloudflare Tunnel and extract link
       shell: pwsh
       run: |
         $cf = "$env:USERPROFILE\cloudflared.exe"
 
-        # Start Cloudflare TCP tunnel RDP (background)
-        Start-Process -NoNewWindow -FilePath $cf -ArgumentList "tunnel run --url tcp://localhost:3389"
+        # Chạy tunnel tạm thời → cloudflare tự tạo domain!
+        $process = Start-Process -FilePath $cf -ArgumentList "tunnel --url tcp://localhost:3389" -NoNewWindow -RedirectStandardOutput output.txt -RedirectStandardError error.txt -PassThru
 
-        # Lưu thông tin runner
-        Add-Content -Path $env:GITHUB_ENV -Value "RDP_LINK=Tunnel started locally (check Cloudflare dashboard for public URL)"
+        Start-Sleep -Seconds 8
+
+        $log = Get-Content output.txt | Out-String
+
+        # Lấy dòng có link Cloudflare TCP
+        $link = ($log -split "`n" | Select-String -Pattern "tcp://" | Select-Object -First 1).ToString().Trim()
+
+        if (!$link) {
+          Write-Host "❌ Không tìm thấy link cloudflare!"
+          $link = "Không lấy được link!"
+        }
+
+        Add-Content -Path $env:GITHUB_ENV -Value "RDP_LINK=$link"
         Add-Content -Path $env:GITHUB_ENV -Value "USERNAME=runneradmin"
         Add-Content -Path $env:GITHUB_ENV -Value "PASSWORD=Password123!"
         Add-Content -Path $env:GITHUB_ENV -Value "CREATED_AT=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
         Add-Content -Path $env:GITHUB_ENV -Value "RUNNER_NAME=$env:RUNNER_NAME"
         Add-Content -Path $env:GITHUB_ENV -Value "RUNNER_OS=$env:RUNNER_OS"
 
-        Start-Sleep -Seconds 8
-
-    - name: Send Full Info to Discord with Retry
+    - name: Send Full Info to Discord
       shell: pwsh
       run: |
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -59,18 +68,7 @@ jobs:
 
         $payload = @{ content = $msg } | ConvertTo-Json -Compress
 
-        $attempt = 0
-        while ($attempt -lt 5) {
-            try {
-                Invoke-RestMethod -Uri $webhook -Method POST -Body $payload -ContentType "application/json"
-                Write-Host "Message sent!"
-                break
-            } catch {
-                Write-Host "Send failed. Retry in 4s..."
-                Start-Sleep -Seconds 4
-                $attempt++
-            }
-        }
+        Invoke-RestMethod -Uri $webhook -Method POST -Body $payload -ContentType "application/json"
 
     - name: Output Info to Log
       shell: pwsh
