@@ -1,4 +1,4 @@
-name: CloudRDP-Ngrok
+name: CloudRDP-Ngrok-Stdout
 
 on:
   workflow_dispatch:
@@ -43,28 +43,33 @@ jobs:
         env:
           NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
 
-      - name: Tạo Tunnel TCP 3389
+      - name: Tạo Tunnel TCP 3389 và lấy URL từ stdout
         id: tunnel
+        shell: pwsh
         run: |
-          # Chạy Ngrok trong same session background job
-          Start-Job -ScriptBlock { .\ngrok.exe tcp 3389 } | Out-Null
+          # Chạy ngrok TCP và đọc stdout
+          $ngrokProcess = Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" `
+            -NoNewWindow -PassThru -RedirectStandardOutput "ngrok_out.txt"
 
-          $maxTries = 20       # thử tối đa 20 lần (~60s)
+          $maxTries = 20
           $try = 0
           $url = $null
 
           while (-not $url -and $try -lt $maxTries) {
               Start-Sleep -Seconds 3
               $try++
-              try {
-                  $tunnels = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
-                  $url = $tunnels.tunnels[0].public_url
-              } catch {
-                  # Nếu API chưa sẵn sàng, bỏ qua
+              if (Test-Path "ngrok_out.txt") {
+                  $content = Get-Content "ngrok_out.txt"
+                  foreach ($line in $content) {
+                      if ($line -match "tcp://.*") {
+                          $url = $Matches[0]
+                          break
+                      }
+                  }
               }
           }
 
-          if (-not $url) { 
+          if (-not $url) {
               Write-Host "❌ Không lấy được URL Ngrok!"
               exit 1
           }
