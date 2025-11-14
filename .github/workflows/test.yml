@@ -1,4 +1,4 @@
-name: CloudRDP-Ngrok-Stable
+name: CloudRDP-Cloudflared
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ jobs:
       - name: Bật RDP & Firewall
         run: |
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
-          -Name "fDenyTSConnections" -Value 0
+            -Name "fDenyTSConnections" -Value 0
 
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           netsh advfirewall firewall add rule name="RDP3389" dir=in action=allow protocol=TCP localport=3389
@@ -31,47 +31,26 @@ jobs:
           Set-Service -Name TermService -StartupType Automatic
           Start-Service -Name TermService
 
-      - name: Tải Ngrok
+      - name: Tải Cloudflared
         run: |
-          Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip -DestinationPath .
+          Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
 
-      - name: Đăng nhập Ngrok
-        run: |
-          .\ngrok.exe config add-authtoken $Env:NGROK_AUTHTOKEN
-        env:
-          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
-
-      - name: Tạo Tunnel TCP 3389 và lấy URL
+      - name: Tạo Tunnel TCP 3389 & Lấy URL
         id: tunnel
         shell: pwsh
         run: |
-          # Start Ngrok trong background job, ghi stdout ra file
-          $job = Start-Job -ScriptBlock { .\ngrok.exe tcp 3389 } 
+          $output = & .\cloudflared.exe tunnel --url tcp://localhost:3389 --no-autoupdate 2>&1
+          Write-Output "RAW OUTPUT:"
+          Write-Output $output
 
-          $maxTries = 30   # thử tối đa 30 lần (~90s)
-          $try = 0
-          $url = $null
-
-          while (-not $url -and $try -lt $maxTries) {
-              Start-Sleep -Seconds 3
-              $try++
-              # đọc stdout live
-              $content = Get-Content "$Env:USERPROFILE\AppData\Local\Temp\ngrok_stdout.txt" -ErrorAction SilentlyContinue
-              foreach ($line in $content) {
-                  if ($line -match "tcp://.*") {
-                      $url = $Matches[0]
-                      break
-                  }
-              }
+          # Parse URL TCP từ stdout
+          $tcp = ($output | Select-String -Pattern "tcp://.*").Matches.Value
+          if (-not $tcp) {
+              Write-Host "❌ Không tìm thấy URL TCP!"
+              exit 1
           }
 
-          if (-not $url) { 
-              Write-Host "❌ Không lấy được URL Ngrok!"
-              Exit 1
-          }
-
-          Write-Output "url=$url" >> $env:GITHUB_OUTPUT
+          Write-Output "url=$tcp" >> $env:GITHUB_OUTPUT
 
       - name: Xuất thông tin RDP
         run: |
