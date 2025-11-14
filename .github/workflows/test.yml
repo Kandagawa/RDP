@@ -20,13 +20,17 @@ jobs:
           net localgroup "Administrators" clouduser /add
           net localgroup "Remote Desktop Users" clouduser /add
 
-      - name: Bật RDP
+      - name: Bật RDP & Service
         run: |
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
           -Name "fDenyTSConnections" -Value 0
 
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           netsh advfirewall firewall add rule name="RDP3389" dir=in action=allow protocol=TCP localport=3389
+
+          # Bật service RDP
+          Set-Service -Name TermService -StartupType Automatic
+          Start-Service -Name TermService
 
       - name: Tải Ngrok
         run: |
@@ -43,16 +47,23 @@ jobs:
         id: tunnel
         run: |
           Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
+          
+          $maxTries = 10
+          $try = 0
+          $url = $null
 
-          $url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels).Content |
-            ConvertFrom-Json |
-            Select-Object -ExpandProperty tunnels |
-            Select-Object -ExpandProperty public_url
+          while (-not $url -and $try -lt $maxTries) {
+              Start-Sleep -Seconds 3
+              $try++
+              $url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels).Content |
+                  ConvertFrom-Json |
+                  Select-Object -ExpandProperty tunnels |
+                  Select-Object -ExpandProperty public_url
+          }
 
-          if (-not $url) {
-            Write-Host "❌ Không lấy được URL Ngrok!"
-            exit 1
+          if (-not $url) { 
+              Write-Host "❌ Không lấy được URL Ngrok!"
+              exit 1 
           }
 
           Write-Output "url=$url" >> $env:GITHUB_OUTPUT
