@@ -28,7 +28,7 @@ jobs:
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           netsh advfirewall firewall add rule name="RDP3389" dir=in action=allow protocol=TCP localport=3389
 
-          # Bật service RDP
+          # Bật Remote Desktop Service
           Set-Service -Name TermService -StartupType Automatic
           Start-Service -Name TermService
 
@@ -46,24 +46,28 @@ jobs:
       - name: Tạo Tunnel TCP 3389
         id: tunnel
         run: |
-          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden
-          
-          $maxTries = 10
+          # Chạy ngrok trong background
+          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389" -PassThru -WindowStyle Hidden
+
+          $maxTries = 20       # thử tối đa 20 lần (~60s)
           $try = 0
           $url = $null
 
           while (-not $url -and $try -lt $maxTries) {
               Start-Sleep -Seconds 3
               $try++
-              $url = (Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels).Content |
-                  ConvertFrom-Json |
-                  Select-Object -ExpandProperty tunnels |
-                  Select-Object -ExpandProperty public_url
+
+              try {
+                  $tunnels = Invoke-RestMethod -Uri http://127.0.0.1:4040/api/tunnels
+                  $url = $tunnels.tunnels[0].public_url
+              } catch {
+                  # Nếu API chưa sẵn sàng, bỏ qua
+              }
           }
 
           if (-not $url) { 
               Write-Host "❌ Không lấy được URL Ngrok!"
-              exit 1 
+              exit 1
           }
 
           Write-Output "url=$url" >> $env:GITHUB_OUTPUT
