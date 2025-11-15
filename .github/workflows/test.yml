@@ -1,4 +1,4 @@
-name: RDP-ngrok-test
+name: RDP-ngrok-foreground
 
 on:
   workflow_dispatch:
@@ -33,18 +33,15 @@ jobs:
         Expand-Archive ngrok.zip -DestinationPath .
         .\ngrok.exe config add-authtoken $env:NGROK_TOKEN
 
-    # 4. Start ngrok TCP tunnel in background and wait
-    - name: Start Ngrok and show RDP info
+    # 4. Start Ngrok TCP tunnel in foreground
+    - name: Start Ngrok TCP (foreground)
       run: |
-        # chạy ngrok TCP trong background job
-        Start-Job -ScriptBlock { .\ngrok.exe tcp 3389 }
-        Start-Sleep -Seconds 10
-        # đọc dashboard 4040 API
-        $tunnels = Invoke-RestMethod http://127.0.0.1:4040/api/tunnels
-        $tcpTunnel = $tunnels.tunnels | Where-Object {$_.proto -eq "tcp"}
-        Write-Host "Connect via RDP to: $($tcpTunnel.public_url)"
+        Write-Host "Ngrok TCP tunnel starting... host/port will appear below."
+        .\ngrok.exe tcp 3389
+        # Ngrok sẽ in host/port trực tiếp trong log
+        # Ví dụ: tcp://4.tcp.ngrok.io:12345
 
-    # 5. Keep session alive
-    - name: Keep alive
-      run: |
-        while ($true) { Write-Host "RDP session running..."; Start-Sleep -Seconds 60 }
+    # 5. Keep session alive (chỉ cần khi ngrok chạy trong background)
+    #- name: Keep alive
+    #  run: |
+    #    while ($true) { Write-Host "RDP session running..."; Start-Sleep -Seconds 60 }
