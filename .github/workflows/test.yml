@@ -1,4 +1,4 @@
-name: RDP-ngrok-max
+name: RDP-Tailscale-clean
 
 on:
   workflow_dispatch:
@@ -9,22 +9,13 @@ jobs:
     timeout-minutes: 350
 
     steps:
-    # 1. Update & Install basic tools
-    - name: Update Environment
-      run: |
-        Set-ExecutionPolicy Unrestricted -Scope Process
-        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-        Install-Module -Name PowerShellGet -Force -AllowClobber
-        winget install Vim.Vim -h --accept-source-agreements --accept-package-agreements
-        winget install Google.Chrome -h --accept-source-agreements --accept-package-agreements
-
-    # 2. Enable RDP
+    # 1. Enable RDP
     - name: Enable RDP
       run: |
         Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    # 3. Create RDP user
+    # 2. Create RDP user
     - name: Set RDP User
       run: |
         $username = "runneradmin"
@@ -33,32 +24,23 @@ jobs:
         net localgroup "Administrators" $username /add
         net localgroup "Remote Desktop Users" $username /add
 
-    # 4. Download & configure ngrok
-    - name: Install Ngrok
+    # 3. Download & install Tailscale
+    - name: Install Tailscale
       env:
-        NGROK_TOKEN: ${{ secrets.NGROK_TOKEN }}
+        TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
       run: |
-        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
-        Expand-Archive ngrok.zip -DestinationPath .
-        $ngrok = "$PWD\ngrok.exe"
-        & $ngrok config add-authtoken $env:NGROK_TOKEN
+        Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-ipn-setup.exe" -OutFile "tailscale.exe"
+        Start-Process -FilePath "tailscale.exe" -ArgumentList "/quiet install" -Wait
 
-    # 5. Start Ngrok TCP (foreground) & output host/port
-    - name: Start Ngrok TCP
+    # 4. Connect Tailscale
+    - name: Connect Tailscale
+      env:
+        TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
       run: |
-        $ngrok = "$PWD\ngrok.exe"
-        Write-Host "Ngrok TCP tunnel starting... host/port will appear below."
-        & $ngrok tcp 3389
+        Start-Process -FilePath "C:\Program Files (x86)\Tailscale IPN\tailscale.exe" -ArgumentList "up --authkey $env:TAILSCALE_AUTH_KEY" -Wait
+        Start-Sleep -Seconds 10
 
-    # 6. Optional: Send host/port + user/pass to Discord webhook
-    #- name: Send Discord webhook
-    #  env:
-    #    DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-    #  run: |
-    #    $message = "RDP Info:`nUser: runneradmin`nPass: GithubRDP2025!`nNgrok TCP: check Action logs"
-    #    Invoke-RestMethod -Uri $env:DISCORD_WEBHOOK -Method POST -ContentType 'application/json' -Body (@{content=$message}|ConvertTo-Json)
-
-    # 7. Keep session alive (nếu muốn ngrok chạy background)
-    #- name: Keep alive
-    #  run: |
-    #    while ($true) { Write-Host "RDP session running..."; Start-Sleep -Seconds 60 }
+    # 5. Keep runner alive
+    - name: Keep alive
+      run: |
+        while ($true) { Write-Host "RDP via Tailscale running..."; Start-Sleep -Seconds 60 }
