@@ -1,4 +1,4 @@
-name: RDP-ngrok-foreground
+name: RDP-ngrok-max
 
 on:
   workflow_dispatch:
@@ -9,13 +9,22 @@ jobs:
     timeout-minutes: 350
 
     steps:
-    # 1. Enable RDP
+    # 1. Update & Install basic tools
+    - name: Update Environment
+      run: |
+        Set-ExecutionPolicy Unrestricted -Scope Process
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
+        Install-Module -Name PowerShellGet -Force -AllowClobber
+        winget install Vim.Vim -h --accept-source-agreements --accept-package-agreements
+        winget install Google.Chrome -h --accept-source-agreements --accept-package-agreements
+
+    # 2. Enable RDP
     - name: Enable RDP
       run: |
         Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    # 2. Set password for user
+    # 3. Create RDP user
     - name: Set RDP User
       run: |
         $username = "runneradmin"
@@ -24,24 +33,32 @@ jobs:
         net localgroup "Administrators" $username /add
         net localgroup "Remote Desktop Users" $username /add
 
-    # 3. Download and configure ngrok
+    # 4. Download & configure ngrok
     - name: Install Ngrok
       env:
         NGROK_TOKEN: ${{ secrets.NGROK_TOKEN }}
       run: |
         Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
         Expand-Archive ngrok.zip -DestinationPath .
-        .\ngrok.exe config add-authtoken $env:NGROK_TOKEN
+        $ngrok = "$PWD\ngrok.exe"
+        & $ngrok config add-authtoken $env:NGROK_TOKEN
 
-    # 4. Start Ngrok TCP tunnel in foreground
-    - name: Start Ngrok TCP (foreground)
+    # 5. Start Ngrok TCP (foreground) & output host/port
+    - name: Start Ngrok TCP
       run: |
+        $ngrok = "$PWD\ngrok.exe"
         Write-Host "Ngrok TCP tunnel starting... host/port will appear below."
-        .\ngrok.exe tcp 3389
-        # Ngrok sẽ in host/port trực tiếp trong log
-        # Ví dụ: tcp://4.tcp.ngrok.io:12345
+        & $ngrok tcp 3389
 
-    # 5. Keep session alive (chỉ cần khi ngrok chạy trong background)
+    # 6. Optional: Send host/port + user/pass to Discord webhook
+    #- name: Send Discord webhook
+    #  env:
+    #    DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+    #  run: |
+    #    $message = "RDP Info:`nUser: runneradmin`nPass: GithubRDP2025!`nNgrok TCP: check Action logs"
+    #    Invoke-RestMethod -Uri $env:DISCORD_WEBHOOK -Method POST -ContentType 'application/json' -Body (@{content=$message}|ConvertTo-Json)
+
+    # 7. Keep session alive (nếu muốn ngrok chạy background)
     #- name: Keep alive
     #  run: |
     #    while ($true) { Write-Host "RDP session running..."; Start-Sleep -Seconds 60 }
