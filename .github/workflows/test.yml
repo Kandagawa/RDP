@@ -1,45 +1,52 @@
-name: Windows-RDP-Anyview
+name: RDP-ngrok-test
+
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  rdp:
     runs-on: windows-latest
-
-    env:
-      RDP_USER: ${{ secrets.RDP_USER }}
-      RDP_PASS: ${{ secrets.RDP_PASS }}
+    timeout-minutes: 350
 
     steps:
+    # 1. Enable RDP
     - name: Enable RDP
       run: |
         Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    - name: Set RDP User Password
+    # 2. Set password for user
+    - name: Set RDP User
       run: |
-        net user $env:RDP_USER $env:RDP_PASS /add
-        net localgroup administrators $env:RDP_USER /add
+        $username = "runneradmin"
+        $password = "GithubRDP2025!"
+        net user $username $password /add
+        net localgroup "Administrators" $username /add
+        net localgroup "Remote Desktop Users" $username /add
 
-    - name: Download Anyview
+    # 3. Download and configure ngrok
+    - name: Install Ngrok
+      env:
+        NGROK_TOKEN: ${{ secrets.NGROK_TOKEN }}
       run: |
-        Invoke-WebRequest `
-          -Uri "https://download.anyviewer.com/update/AnyViewer_Setup.exe" `
-          -OutFile "AnyViewer_Setup.exe"
+        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+        Expand-Archive ngrok.zip -DestinationPath .
+        .\ngrok.exe config add-authtoken $env:NGROK_TOKEN
 
-    - name: Install Anyview Silently
+    # 4. Start ngrok TCP tunnel
+    - name: Start Ngrok
       run: |
-        Start-Process -Wait -FilePath .\AnyViewer_Setup.exe -ArgumentList "/silent"
+        Start-Process -NoNewWindow .\ngrok.exe tcp 3389
+        Start-Sleep -Seconds 10
 
-    - name: Show Connection Information
+    # 5. Get Ngrok URL
+    - name: Show Ngrok URL
       run: |
-        $ip = (Invoke-WebRequest -uri "http://ipinfo.io/ip").Content.Trim()
-        Write-Host "============================="
-        Write-Host " 🎯 RDP:"
-        Write-Host "   ➤  $ip:3389"
-        Write-Host "   ➤  User: $env:RDP_USER"
-        Write-Host "   ➤  Pass: $env:RDP_PASS"
-        Write-Host ""
-        Write-Host " 🎯 Anyview đã được cài."
-        Write-Host "   ➤ Hãy mở Anyview trên máy và tạo tài khoản / đăng nhập."
-        Write-Host "============================="
+        $tunnels = Invoke-RestMethod http://127.0.0.1:4040/api/tunnels
+        $tcpTunnel = $tunnels.tunnels | Where-Object {$_.proto -eq "tcp"}
+        Write-Host "Connect via RDP to: $($tcpTunnel.public_url)"
+
+    # 6. Keep session alive
+    - name: Keep alive
+      run: |
+        while ($true) { Write-Host "RDP session running..."; Start-Sleep -Seconds 60 }
