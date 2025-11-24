@@ -1,82 +1,57 @@
-name: Windows RDP Full Info to Discord
+name: Test Ngrok Multi-Runner
 
 on:
   workflow_dispatch:
 
 jobs:
-  rdp:
-    runs-on: windows-latest
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Print OS Info
+        run: |
+          echo "Running on ${{ matrix.os }}"
+          echo "This is just a test log."
 
-    - name: Enable RDP & Firewall
-      shell: pwsh
-      run: |
-        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-        netsh advfirewall firewall set rule group="remote desktop" new enable=yes
+      # ----- Linux -----
+      - name: Download ngrok (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          curl -s -o ngrok.zip https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip
+          unzip ngrok.zip
 
-    - name: Download Cloudflared
-      shell: pwsh
-      run: |
-        Invoke-WebRequest "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" `
-          -OutFile "$env:USERPROFILE\cloudflared.exe"
+      # ----- Windows -----
+      - name: Download ngrok (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: powershell
+        run: |
+          Invoke-WebRequest "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+          Expand-Archive "ngrok.zip" -DestinationPath .
 
-    - name: Start Cloudflare Tunnel and extract link
-      shell: pwsh
-      run: |
-        $cf = "$env:USERPROFILE\cloudflared.exe"
+      - name: Add Ngrok Token
+        if: "!startsWith(matrix.os, 'macos')"
+        run: ./ngrok authtoken 35siaobVPuzk5NX6rOFlRctcJes_4ct6tkribZJjSUNXPfpRM
 
-        # Chạy tunnel tạm thời → cloudflare tự tạo domain!
-        $process = Start-Process -FilePath $cf -ArgumentList "tunnel --url tcp://localhost:3389" -NoNewWindow -RedirectStandardOutput output.txt -RedirectStandardError error.txt -PassThru
+      - name: Start Ngrok Tunnel
+        if: "!startsWith(matrix.os, 'macos')" # macOS không cần
+        run: |
+          nohup ./ngrok tcp 8080 > ngrok.log 2>&1 & 
+          echo "Launching Ngrok..."
 
-        Start-Sleep -Seconds 8
+      - name: Wait and Show ngrok logs
+        if: "!startsWith(matrix.os, 'macos')"
+        run: |
+          sleep 5
+          echo "===== NGROK LOGS ====="
+          cat ngrok.log
 
-        $log = Get-Content output.txt | Out-String
-
-        # Lấy dòng có link Cloudflare TCP
-        $link = ($log -split "`n" | Select-String -Pattern "tcp://" | Select-Object -First 1).ToString().Trim()
-
-        if (!$link) {
-          Write-Host "❌ Không tìm thấy link cloudflare!"
-          $link = "Không lấy được link!"
-        }
-
-        Add-Content -Path $env:GITHUB_ENV -Value "RDP_LINK=$link"
-        Add-Content -Path $env:GITHUB_ENV -Value "USERNAME=runneradmin"
-        Add-Content -Path $env:GITHUB_ENV -Value "PASSWORD=Password123!"
-        Add-Content -Path $env:GITHUB_ENV -Value "CREATED_AT=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-        Add-Content -Path $env:GITHUB_ENV -Value "RUNNER_NAME=$env:RUNNER_NAME"
-        Add-Content -Path $env:GITHUB_ENV -Value "RUNNER_OS=$env:RUNNER_OS"
-
-    - name: Send Full Info to Discord
-      shell: pwsh
-      run: |
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-        $webhook = "https://discord.com/api/webhooks/1438785138170269787/2gW1Ln2I362LHpT5hIex2bmoMSrGyy536licIWsrznhgX0kh2i5oRvaT_sJ6DcY5sS3D"
-
-        $msg = "**Windows RDP VM Info**`n" +
-               "-----------------------`n" +
-               "🔗 Link: $env:RDP_LINK`n" +
-               "👤 Username: $env:USERNAME`n" +
-               "🔐 Password: $env:PASSWORD`n" +
-               "🖥 Runner Name: $env:RUNNER_NAME`n" +
-               "💽 Runner OS: $env:RUNNER_OS`n" +
-               "🕒 Created At: $env:CREATED_AT"
-
-        $payload = @{ content = $msg } | ConvertTo-Json -Compress
-
-        Invoke-RestMethod -Uri $webhook -Method POST -Body $payload -ContentType "application/json"
-
-    - name: Output Info to Log
-      shell: pwsh
-      run: |
-        Write-Host "===== Windows RDP VM Info ====="
-        Write-Host "Link: $env:RDP_LINK"
-        Write-Host "Username: $env:USERNAME"
-        Write-Host "Password: $env:PASSWORD"
-        Write-Host "Runner Name: $env:RUNNER_NAME"
-        Write-Host "Runner OS: $env:RUNNER_OS"
-        Write-Host "Created At: $env:CREATED_AT"
+      - name: Fake Logs
+        run: |
+          echo "Log test bắt đầu..."
+          for i in {1..10}; do
+            echo "Log số $i đang chạy..."
+            sleep 1
+          done
