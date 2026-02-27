@@ -1,46 +1,164 @@
-name: RDP-Tailscale-clean
+name: RDP + RustDesk + Ngrok
 
 on:
   workflow_dispatch:
+    inputs:
+      runtime_minutes:
+        description: "Runtime (max 360, default 355)"
+        required: false
+        default: "355"
+      quick_test:
+        description: "Run 5-minute test"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
 
 jobs:
   rdp:
     runs-on: windows-latest
-    timeout-minutes: 350
+    timeout-minutes: 370
+    env:
+      RDP_USER: Bullettemporary
+      RDP_PASS: Bullet@12345
+      NGROK_TOKEN: 35siaobVPuzk5NX6rOFlRctcJes_4ct6tkribZJjSUNXPfpRM
+      NGROK_REGION: ap
 
     steps:
-    # 1. Enable RDP
-    - name: Enable RDP
-      run: |
-        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+      # ========== SETUP ==========
+      - name: Set runtime
+        run: |
+          $runtime = [int]"${{ inputs.runtime_minutes }}"
+          if ("${{ inputs.quick_test }}" -eq "true") { $runtime = 5 }
+          if ($runtime -gt 360) { $runtime = 355 }
+          "RUNTIME_MINUTES=$runtime" | Out-File -Append $env:GITHUB_ENV
+          Write-Host "Runtime: $runtime minutes"
 
-    # 2. Create RDP user
-    - name: Set RDP User
-      run: |
-        $username = "runneradmin"
-        $password = "GithubRDP2025!"
-        net user $username $password /add
-        net localgroup "Administrators" $username /add
-        net localgroup "Remote Desktop Users" $username /add
+      # ========== NGROK ==========
+      - name: Install & Auth Ngrok
+        run: |
+          $ngrokDir = "$env:LOCALAPPDATA\ngrok"
+          $ngrokExe = "$ngrokDir\ngrok.exe"
+          
+          if (-not (Test-Path $ngrokExe)) {
+            New-Item -ItemType Directory -Path $ngrokDir -Force | Out-Null
+            Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "$env:TEMP\ngrok.zip"
+            Expand-Archive -Path "$env:TEMP\ngrok.zip" -DestinationPath $ngrokDir -Force
+          }
+          
+          & $ngrokExe config add-authtoken $env:NGROK_TOKEN | Out-Null
+          Write-Host "✅ Ngrok ready"
 
-    # 3. Download & install Tailscale
-    - name: Install Tailscale
-      env:
-        TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-      run: |
-        Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-ipn-setup.exe" -OutFile "tailscale.exe"
-        Start-Process -FilePath "tailscale.exe" -ArgumentList "/quiet install" -Wait
+      # ========== RDP USER ==========
+      - name: Enable RDP + Create User
+        run: |
+          $sec = ConvertTo-SecureString $env:RDP_PASS -AsPlainText -Force
+          
+          if (-not (Get-LocalUser -Name $env:RDP_USER -EA SilentlyContinue)) {
+            New-LocalUser -Name $env:RDP_USER -Password $sec -AccountNeverExpires
+            Add-LocalGroupMember -Group "Administrators" -Member $env:RDP_USER
+          } else {
+            Set-LocalUser -Name $env:RDP_USER -Password $sec
+          }
+          
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:RDP_USER -EA SilentlyContinue
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          Write-Host "✅ RDP enabled"
 
-    # 4. Connect Tailscale
-    - name: Connect Tailscale
-      env:
-        TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-      run: |
-        Start-Process -FilePath "C:\Program Files (x86)\Tailscale IPN\tailscale.exe" -ArgumentList "up --authkey $env:TAILSCALE_AUTH_KEY" -Wait
-        Start-Sleep -Seconds 10
+      # ========== START NGROK TUNNEL ==========
+      - name: Start Ngrok TCP Tunnel
+        run: |
+          $ngrok = "$env:LOCALAPPDATA\ngrok\ngrok.exe"
+          
+          # Start tunnel
+          Start-Process -FilePath $ngrok -ArgumentList "tcp","3389","--region",$env:NGROK_REGION -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          
+          # Get tunnel info
+          $tunnel = $null
+          for ($i=0; $i -lt 15; $i++) {
+            try {
+              $res = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
+              if ($res.tunnels.Count -gt 0) { $tunnel = $res.tunnels[0]; break }
+            } catch { Start-Sleep -Seconds 1 }
+          }
+          
+          if (-not $tunnel) { Write-Error "Ngrok failed"; exit 1 }
+          
+          # Parse tcp://host:port
+          $url = $tunnel.public_url
+          if ($url -match "tcp://(.+):(\d+)") {
+            $host = $matches[1]
+            $port = $matches[2]
+            
+            "NGROK_HOST=$host" | Out-File -Append $env:GITHUB_ENV
+            "NGROK_PORT=$port" | Out-File -Append $env:GITHUB_ENV
+            
+            # Print banner
+            Write-Host ""
+            Write-Host "╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+            Write-Host "║                     🌐 RDP VIA NGROK                           ║" -ForegroundColor Green
+            Write-Host "╠════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+            Write-Host "║  Host:    $host" -ForegroundColor Yellow
+            Write-Host "║  Port:    $port" -ForegroundColor Yellow
+            Write-Host "║  User:    $env:RDP_USER" -ForegroundColor Yellow
+            Write-Host "║  Pass:    $env:RDP_PASS" -ForegroundColor Yellow
+            Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          }
 
-    # 5. Keep runner alive
-    - name: Keep alive
-      run: |
-        while ($true) { Write-Host "RDP via Tailscale running..."; Start-Sleep -Seconds 60 }
+      # ========== RUSTDESK ==========
+      - name: Install & Start RustDesk
+        run: |
+          $rd = "C:\Program Files\RustDesk\rustdesk.exe"
+          
+          if (-not (Test-Path $rd)) {
+            $msi = "$env:TEMP\rustdesk.msi"
+            Invoke-WebRequest -Uri "https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-x86_64.msi" -OutFile $msi
+            Start-Process msiexec.exe -ArgumentList "/i","`"$msi`"","/quiet","/norestart" -Wait
+            Remove-Item $msi -Force
+          }
+          
+          # Open ports
+          21115..21119 | ForEach-Object { netsh advfirewall firewall add rule name="RD-TCP-$_" dir=in action=allow protocol=TCP localport=$_ 2>$null }
+          netsh advfirewall firewall add rule name="RD-UDP-21116" dir=in action=allow protocol=UDP localport=21116 2>$null
+          
+          # Start
+          Start-Process -FilePath $rd
+          Start-Sleep -Seconds 5
+          
+          # Get ID
+          $cfg = "$env:APPDATA\RustDesk\config\RustDesk2.toml"
+          $id = "unknown"
+          if (Test-Path $cfg) {
+            $c = Get-Content $cfg -Raw
+            if ($c -match 'id\s*=\s*"([^"]+)"') { $id = $matches[1] }
+          }
+          
+          Write-Host ""
+          Write-Host "╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Blue
+          Write-Host "║                     🔷 RUSTDESK READY                          ║" -ForegroundColor Blue
+          Write-Host "╠════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          Write-Host "║  ID:       $id" -ForegroundColor Yellow
+          Write-Host "║  Password: (Check RustDesk window or use 'bullet123')" -ForegroundColor Yellow
+          Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Blue
+
+      # ========== KEEP ALIVE ==========
+      - name: Session Active
+        run: |
+          $end = (Get-Date).AddMinutes($env:RUNTIME_MINUTES)
+          
+          while ((Get-Date) -lt $end) {
+            $left = [math]::Round(($end - (Get-Date)).TotalMinutes)
+            Write-Host "[⏰ $left min] Ngrok: $env:NGROK_HOST`:$env:NGROK_PORT | RustDesk running"
+            Start-Sleep -Seconds 60
+          }
+          
+          Write-Host "⏹️ Session ended"
+          
